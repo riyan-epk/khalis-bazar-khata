@@ -31,7 +31,7 @@ async function shopifyAll(store, token, path, key) {
 
 // Only the fields the khata needs: no phone numbers, emails or street addresses.
 async function loadShopify(store, token) {
-  const fields = 'id,name,created_at,cancelled_at,financial_status,fulfillment_status,test,line_items,shipping_address,billing_address,customer';
+  const fields = 'id,name,created_at,cancelled_at,financial_status,fulfillment_status,test,total_tax,line_items,shipping_address,billing_address,customer';
   const [orders, products] = await Promise.all([
     shopifyAll(store, token, `orders.json?status=any&limit=250&fields=${fields}`, 'orders'),
     shopifyAll(store, token, 'products.json?limit=250&fields=id,title,handle,status,variants', 'products'),
@@ -47,6 +47,7 @@ async function loadShopify(store, token) {
         cancelled_at: o.cancelled_at,
         financial_status: o.financial_status,
         fulfillment_status: o.fulfillment_status,
+        tax: Number(o.total_tax || 0), // GST Shopify added at checkout
         customer: addr.name || person || '',
         city: addr.city || '',
         items: (o.line_items || []).map(li => ({

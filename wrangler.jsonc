@@ -1,0 +1,7 @@
+// Cloudflare Worker "khalis-bazar-khata" (khata.roomcalcs.com): serves the static app in ./site.
+// With the Worker connected to this GitHub repo (Settings → Build), every push to main redeploys it.
+{
+  "name": "khalis-bazar-khata",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "./site" }
+}

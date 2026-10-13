@@ -15,16 +15,17 @@ const TABLES = {
 const COLUMNS = {
   products: ['id', 'handle', 'title', 'variant', 'store_price', 'display_price', 'active', 'position', 'updated_at'],
   orders: ['id', 'order_no', 'date', 'customer', 'city', 'status', 'source', 'shopify_id', 'delivery', 'other_cost',
-    'cost_override', 'in_parc', 'note', 'created_at', 'updated_at'],
+    'cost_override', 'tax', 'in_parc', 'note', 'created_at', 'updated_at'],
   items: ['id', 'order_id', 'product_id', 'title', 'variant', 'qty', 'price', 'parc_cost', 'position'],
   payments: ['id', 'date', 'amount', 'method', 'note', 'created_at', 'updated_at'],
   settings: ['id', 'data', 'updated_at'],
 };
-const NUMERIC = new Set(['store_price', 'display_price', 'delivery', 'other_cost', 'cost_override', 'qty', 'price', 'parc_cost', 'amount']);
+const NUMERIC = new Set(['store_price', 'display_price', 'delivery', 'other_cost', 'cost_override', 'tax', 'qty', 'price', 'parc_cost', 'amount']);
 
-export function clean(table, row) {
+// skip: columns this database does not have yet (an older schema.sql), so saving still works.
+export function clean(table, row, skip) {
   const out = {};
-  for (const c of COLUMNS[table]) if (row[c] !== undefined) out[c] = row[c];
+  for (const c of COLUMNS[table]) if (row[c] !== undefined && !skip?.has(c)) out[c] = row[c];
   if (COLUMNS[table].includes('updated_at')) out.updated_at = new Date().toISOString();
   return out;
 }
@@ -90,6 +91,7 @@ async function supabaseDb(config) {
   const sb = createClient(config.supabaseUrl, config.supabaseKey);
 
   const fail = (error) => { throw new Error(error.message || String(error)); };
+  const missing = new Set(); // columns added after the first schema.sql that this project lacks
 
   async function fetchAll(table) {
     const rows = [];
@@ -126,12 +128,15 @@ async function supabaseDb(config) {
       return data === true;
     },
     async load() {
+      const { error } = await sb.from(TABLES.orders).select('tax').limit(1);
+      if (error && /tax/.test(error.message)) missing.add('tax');
       const out = {};
       for (const t of Object.keys(TABLES)) out[t] = await fetchAll(t);
       return out;
     },
+    missingColumns: () => [...missing],
     async put(table, rows) {
-      const list = [].concat(rows).map(r => clean(table, r));
+      const list = [].concat(rows).map(r => clean(table, r, missing));
       for (let i = 0; i < list.length; i += 500) {
         const { error } = await sb.from(TABLES[table]).upsert(list.slice(i, i + 500), { onConflict: 'id' });
         if (error) fail(error);

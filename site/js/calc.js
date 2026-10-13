@@ -69,7 +69,9 @@ export function itemsByOrder(items) {
 //  - cancelled: nothing counts anywhere
 //  - returned:  no sale and no PARC cost (goods go back); delivery/other costs still count as loss
 //  - cost_override (optional) replaces the price-list PARC amount for that order
-export function orderCalc(order, lines = []) {
+//  - tax = GST Shopify added on top; total = sale + GST (the same total as Shopify). GST is profit
+//    only when opts.gstIsIncome (owner keeps it); otherwise it is the government's money.
+export function orderCalc(order, lines = [], opts = {}) {
   const qty = sum(lines, l => l.qty);
   const saleGross = sum(lines, l => l.qty * l.price);
   const goodsAuto = sum(lines, l => l.qty * l.parc_cost);
@@ -77,14 +79,19 @@ export function orderCalc(order, lines = []) {
   const parcAmount = override ?? goodsAuto;
   const returned = order.status === 'returned';
   const cancelled = order.status === 'cancelled';
+  const taxGross = round2(num(order.tax) ?? 0);
   const sale = returned || cancelled ? 0 : saleGross;
+  const gst = returned || cancelled ? 0 : taxGross;
+  const total = round2(sale + gst);
+  const income = round2(sale + (opts.gstIsIncome ? gst : 0));
   const goods = returned || cancelled ? 0 : parcAmount;
   const delivery = cancelled ? 0 : num(order.delivery) ?? 0;
   const other = cancelled ? 0 : num(order.other_cost) ?? 0;
-  const profit = round2(sale - goods - delivery - other);
+  const profit = round2(income - goods - delivery - other);
   return {
-    order, lines, qty, saleGross, sale, goodsAuto, parcAmount, goods, delivery, other, profit,
-    margin: sale ? profit / sale : null,
+    order, lines, qty, saleGross, taxGross, totalGross: round2(saleGross + taxGross),
+    sale, gst, total, income, goodsAuto, parcAmount, goods, delivery, other, profit,
+    margin: income ? profit / income : null,
     deliveryMissing: !cancelled && num(order.delivery) == null,
     costMissing: override == null && lines.some(l => !Number(l.parc_cost)),
     inKhata: !!order.in_parc && !returned && !cancelled,
@@ -93,7 +100,8 @@ export function orderCalc(order, lines = []) {
 
 export function allOrderCalcs(state) {
   const byOrder = itemsByOrder(state.items);
-  return state.orders.map(o => orderCalc(o, byOrder.get(o.id) || []));
+  const opts = { gstIsIncome: !!state.settings?.gst_is_income };
+  return state.orders.map(o => orderCalc(o, byOrder.get(o.id) || [], opts));
 }
 
 /* ---------- PARC khata ---------- */
@@ -196,12 +204,15 @@ export function totals(list) {
     orders: list.reduce((s, x) => s + (x.orders ?? 1), 0),
     qty: sum(list, x => x.qty),
     sale: sum(list, x => x.sale),
+    gst: sum(list, x => x.gst),
+    total: sum(list, x => x.total),
+    income: sum(list, x => x.income),
     goods: sum(list, x => x.goods),
     delivery: sum(list, x => x.delivery),
     other: sum(list, x => x.other),
     profit: sum(list, x => x.profit),
   };
-  t.margin = t.sale ? t.profit / t.sale : null;
+  t.margin = t.income ? t.profit / t.income : null;
   return t;
 }
 
@@ -229,12 +240,11 @@ export function groupByPeriod(calcs, mode) {
     .sort((a, b) => (a.key < b.key ? 1 : -1));
 }
 
-// Product view: each order's delivery + other costs are shared across its products by sale value.
+// Product view: each order's GST, delivery and other costs are shared across its products by sale value.
 export function groupByProduct(calcs) {
   const map = new Map();
   for (const c of calcs) {
     const returned = c.order.status === 'returned';
-    const costs = c.delivery + c.other;
     const n = c.lines.length || 1;
     for (const l of c.lines) {
       const lineSale = l.qty * l.price;
@@ -242,10 +252,13 @@ export function groupByProduct(calcs) {
       const share = c.saleGross ? lineSale / c.saleGross : 1 / n;
       const goods = c.goods ? (c.goodsAuto ? c.goods * (lineAuto / c.goodsAuto) : c.goods / n) : 0;
       const key = l.product_id || `${l.title}|${l.variant}`;
-      const g = map.get(key) || { key, title: l.title, variant: l.variant, qty: 0, returnedQty: 0, sale: 0, goods: 0, delivery: 0, other: 0, orderIds: new Set() };
+      const g = map.get(key) || { key, title: l.title, variant: l.variant, qty: 0, returnedQty: 0, sale: 0, gst: 0,
+        income: 0, goods: 0, delivery: 0, other: 0, orderIds: new Set() };
       if (returned) g.returnedQty += Number(l.qty);
       else g.qty += Number(l.qty);
       g.sale += returned ? 0 : lineSale;
+      g.gst += c.gst * share;
+      g.income += (returned ? 0 : lineSale) + (c.income - c.sale) * share;
       g.goods += goods;
       g.delivery += c.delivery * share;
       g.other += c.other * share;
@@ -256,11 +269,12 @@ export function groupByProduct(calcs) {
   return [...map.values()].map(g => {
     const row = {
       key: g.key, title: g.title, variant: g.variant, orders: g.orderIds.size,
-      qty: round2(g.qty), returnedQty: round2(g.returnedQty), sale: round2(g.sale), goods: round2(g.goods),
+      qty: round2(g.qty), returnedQty: round2(g.returnedQty), sale: round2(g.sale), gst: round2(g.gst),
+      total: round2(g.sale + g.gst), income: round2(g.income), goods: round2(g.goods),
       delivery: round2(g.delivery), other: round2(g.other),
     };
-    row.profit = round2(row.sale - row.goods - row.delivery - row.other);
-    row.margin = row.sale ? row.profit / row.sale : null;
+    row.profit = round2(row.income - row.goods - row.delivery - row.other);
+    row.margin = row.income ? row.profit / row.income : null;
     return row;
   }).sort((a, b) => b.profit - a.profit);
 }

@@ -42,11 +42,15 @@ create table if not exists khata_orders (
   delivery      numeric(12,2),                  -- null = not entered yet
   other_cost    numeric(12,2) default 0,
   cost_override numeric(12,2),                  -- PARC amount if different from the price list
+  tax           numeric(12,2),                  -- GST Shopify added on top (Shopify total = products + tax)
   in_parc       boolean not null default true,  -- handed over to PARC = counts in the PARC khata
   note          text default '',
   created_at    timestamptz default now(),
   updated_at    timestamptz default now()
 );
+
+-- Added 2026-10-13 for projects created with the first version of this file:
+alter table khata_orders add column if not exists tax numeric(12,2);
 
 create table if not exists khata_items (
   id         text primary key,

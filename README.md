@@ -85,10 +85,13 @@ orders and products. The function also refuses anyone who is not signed in and l
    ```
    This key is meant to be public. The data is protected by the login + the rules from step 2.
 
-### 6. Publish on Cloudflare (done: Worker `khalis-bazar-khata`)
+### 6. Publish on Cloudflare (Worker `khalis-bazar-khata`)
 The `khata` folder is its own private GitHub repo, `riyan-epk/khalis-bazar-khata` (kept out of the
-shopify repo, whose 116 MB photo zip is too big for GitHub). Cloudflare **Workers & Pages** is connected
-to that repo and serves the `site` folder. **Every push to `main` redeploys the site automatically**:
+shopify repo, whose 116 MB photo zip is too big for GitHub). `wrangler.jsonc` tells Cloudflare to serve the `site` folder.
+
+Connect the Worker to the repo once: **Workers & Pages → khalis-bazar-khata → Settings → Build → Connect** →
+GitHub → `riyan-epk/khalis-bazar-khata`, branch `main`, build command empty, deploy command `npx wrangler deploy`
+→ Save. After that, **every push to `main` redeploys the site automatically**:
 
 ```bash
 git -C "C:/Users/SCS/Desktop/shopify/khata" commit -am "Describe the change"
@@ -117,7 +120,10 @@ DNS record and SSL by itself. Optional: turn off the `workers.dev` address in th
   so later price changes don't rewrite old orders. (In an order, **Use current price list** updates it.)
 - **PARC khata**: orders ticked "Handed over to PARC" are added at their PARC amount; payments
   are subtracted. Balance 0 = **NIL**. Returned and cancelled orders are not counted.
-- **Profit** = sale (without GST) − PARC cost − delivery − other costs.
+- **Sales** = product prices + GST, the same as Shopify's order total (Shopify adds 16% GST at checkout).
+  GST comes from Shopify on Sync and is shown in its own column.
+- **Profit** = product sales − PARC cost − delivery − other costs. GST is not counted as profit unless you
+  choose "I keep it" in Settings ⚙ → GST.
   Returned orders: no sale and no PARC cost, but their delivery and other costs count as a loss.
 - **By product** view: each order's delivery and other costs are shared across its products by sale value.
 - Delivery suggestions use your courier rates: Within city 167 · Same zone 270 · Other zone 315
@@ -130,3 +136,10 @@ DNS record and SSL by itself. Optional: turn off the `workers.dev` address in th
   Regenerate with `node scripts/khata-products.mjs`.
 - `supabase/schema.sql`: the tables and access rules.
 - `supabase/functions/shopify-sync/index.ts`: reads orders and products from Shopify for Sync.
+
+## Updates to an existing setup
+
+- **2026-10-13, GST:** in Supabase **SQL Editor** run
+  `alter table khata_orders add column if not exists tax numeric(12,2);`, then open
+  **Edge Functions → shopify-sync → Code**, replace it with `supabase/functions/shopify-sync/index.ts`, **Deploy**,
+  and press **Sync Shopify** in the khata.

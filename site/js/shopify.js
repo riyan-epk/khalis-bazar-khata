@@ -17,7 +17,8 @@ export function statusFromShopify(o) {
 export function mergeShopify(state, payload, settings) {
   const now = new Date().toISOString();
   const products = new Map(state.products.map(p => [p.id, p]));
-  const out = { products: [], orders: [], items: [], added: 0, updated: 0, productsAdded: 0, pricesChanged: 0 };
+  const out = { products: [], orders: [], items: [], added: 0, updated: 0, taxUpdated: 0, productsAdded: 0, pricesChanged: 0,
+    hasTax: !(payload.orders || []).length || (payload.orders || []).some(o => o.tax != null) };
 
   let position = state.products.reduce((m, p) => Math.max(m, p.position || 0), 0);
   for (const v of payload.products || []) {
@@ -46,15 +47,18 @@ export function mergeShopify(state, payload, settings) {
     const id = `so_${o.id}`;
     if (deleted.has(id)) continue; // deleted in the khata on purpose: never re-import
     const status = statusFromShopify(o);
+    const tax = o.tax == null ? null : round2(o.tax); // GST; null when the sync function is the older version
     const cur = existing.get(id);
     if (cur) {
       let next = cur.status;
       if (status === 'cancelled' && cur.status !== 'cancelled') next = 'cancelled';
       else if (status === 'returned' && cur.status !== 'returned' && cur.status !== 'cancelled') next = 'returned';
       else if (cur.status in RANK && status in RANK && RANK[status] > RANK[cur.status]) next = status;
-      if (next !== cur.status) {
-        out.orders.push({ ...cur, status: next, in_parc: next === 'cancelled' ? false : cur.in_parc });
-        out.updated++;
+      const taxChanged = tax != null && tax !== (cur.tax == null ? null : Number(cur.tax));
+      if (next !== cur.status || taxChanged) {
+        out.orders.push({ ...cur, status: next, in_parc: next === 'cancelled' ? false : cur.in_parc, ...(taxChanged ? { tax } : {}) });
+        if (next !== cur.status) out.updated++;
+        if (taxChanged) out.taxUpdated++;
       }
       continue;
     }
@@ -65,7 +69,7 @@ export function mergeShopify(state, payload, settings) {
       .filter(li => li.qty > 0);
     out.orders.push({
       id, order_no: o.name, date: o.created_at.slice(0, 10), customer: o.customer || '', city: o.city || '',
-      status, source: 'shopify', shopify_id: o.id, delivery: null, other_cost: 0, cost_override: null,
+      status, source: 'shopify', shopify_id: o.id, delivery: null, other_cost: 0, cost_override: null, tax,
       in_parc: status !== 'cancelled', note: '', created_at: o.created_at || now,
     });
     lines.forEach((li, i) => {

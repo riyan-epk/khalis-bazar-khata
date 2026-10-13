@@ -151,7 +151,7 @@ main { max-width: 1320px; margin: 0 auto; padding: 18px 16px 60px; }
 /* ---------- KPI tiles ---------- */
 .kpis { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 12px; }
 .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-@media (min-width: 1200px) { .tiles:has(> :nth-child(4)) { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 900px) { .tiles:has(> :nth-child(5)) { grid-template-columns: repeat(3, 1fr); } }
 .card, .tile, .hero-card {
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
   box-shadow: var(--shadow); padding: 14px 16px;
@@ -327,3 +327,4 @@ h3.section { font: 700 15px/1.2 var(--font); margin: 18px 0 8px; color: var(--in
   thead th, tfoot td { position: static; }
   .link { color: #000; }
 }
+.banner code { font-size: 13px; background: var(--surface); padding: 1px 6px; border-radius: 6px; border: 1px solid var(--line); }

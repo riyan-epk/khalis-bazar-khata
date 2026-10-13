@@ -13,6 +13,7 @@ const DEFAULT_SETTINGS = {
     { label: 'Other zone', amount: 315 },
   ],
   ignored_orders: [], // deleted Shopify orders { id, order_no, date }: Sync Shopify skips them
+  gst_is_income: false, // false = GST belongs to the government, so it is not counted as profit
 };
 const PAY_METHODS = ['Cash', 'Bank transfer', 'JazzCash', 'Easypaisa', 'Cheque', 'Other'];
 const VIEWS = [['parc', 'PARC Display Khata'], ['pnl', 'Profit & Loss'], ['orders', 'Orders'], ['prices', 'Price list']];
@@ -418,22 +419,27 @@ function otherInput(c) {
     value="${o.other_cost || ''}" placeholder="0" aria-label="Other cost for ${esc(o.order_no)}">`;
 }
 
+// "Sales" = what the customer paid: products + GST, the same as Shopify's order total.
 const moneyCols = (get = (r) => r) => [
-  { key: 'sale', label: 'Sale (Rs)', cls: 'num', value: r => get(r).sale, cell: r => num(get(r).sale), csv: r => get(r).sale },
+  { key: 'total', label: 'Sales incl. GST (Rs)', cls: 'num', value: r => get(r).total, cell: r => num(get(r).total), csv: r => get(r).total },
+  { key: 'gst', label: 'GST (Rs)', cls: 'num', value: r => get(r).gst, cell: r => num(get(r).gst), csv: r => get(r).gst },
   { key: 'goods', label: 'PARC cost (Rs)', cls: 'num', value: r => get(r).goods, cell: r => num(get(r).goods), csv: r => get(r).goods },
   { key: 'delivery', label: 'Delivery (Rs)', cls: 'num', value: r => get(r).delivery, cell: r => num(get(r).delivery), csv: r => get(r).delivery },
   { key: 'other', label: 'Other (Rs)', cls: 'num', value: r => get(r).other, cell: r => num(get(r).other), csv: r => get(r).other },
   { key: 'profit', label: 'Profit (Rs)', cls: 'num', value: r => get(r).profit, cell: r => plCell(get(r).profit), csv: r => get(r).profit },
   { key: 'margin', label: 'Margin', cls: 'num', value: r => get(r).margin, cell: r => pct(get(r).margin), csv: r => (get(r).margin == null ? '' : K.round2(get(r).margin * 100)) },
 ];
-const moneyFoot = (t) => ({ sale: num(t.sale), goods: num(t.goods), delivery: num(t.delivery), other: num(t.other), profit: plCell(t.profit), margin: pct(t.margin) });
+const moneyFoot = (t) => ({ total: num(t.total), gst: num(t.gst), goods: num(t.goods), delivery: num(t.delivery), other: num(t.other), profit: plCell(t.profit), margin: pct(t.margin) });
+const colsByKey = (keys) => { const all = moneyCols(); return keys.map(k => all.find(c => c.key === k)); };
 
 function viewPnl() {
   const range = K.periodRange(S.ui.pnlPeriod, S.ui);
   const all = K.pnlOrders(S, range, S.ui.pnlStatus);
   const missing = all.filter(c => c.deliveryMissing);
+  const noGst = all.filter(c => c.order.source === 'shopify' && c.order.tax == null).length;
   const calcs = S.onlyMissing ? missing : all;
   const T = K.totals(calcs);
+  const gstKept = !!S.settings.gst_is_income;
   const group = S.ui.group;
   let body;
 
@@ -446,12 +452,11 @@ function viewPnl() {
         cell: c => `<button class="link" data-action="edit-order" data-id="${c.order.id}">${esc(c.order.order_no)}</button><span class="sub">${esc([c.order.customer, c.order.city].filter(Boolean).join(' · '))}</span>` },
       { key: 'status', label: 'Status', value: c => c.order.status, cell: c => badge(c.order.status), csv: c => c.order.status },
       { key: 'items', label: 'Products', cls: 'items', cell: c => itemsText(c.lines), csv: c => c.lines.map(l => `${l.title} ${l.variant} x${l.qty}`).join('; ') },
-      { key: 'sale', label: 'Sale (Rs)', cls: 'num', value: c => c.sale, cell: c => num(c.sale), csv: c => c.sale },
+      ...colsByKey(['total', 'gst']),
       { key: 'goods', label: 'PARC cost (Rs)', cls: 'num', value: c => c.goods, cell: costInput, csv: c => c.goods },
       { key: 'delivery', label: 'Delivery (Rs)', cls: 'num', value: c => c.delivery, cell: deliveryInput, csv: c => (c.deliveryMissing ? '' : c.delivery) },
       { key: 'other', label: 'Other cost (Rs)', cls: 'num', value: c => c.other, cell: otherInput, csv: c => c.other },
-      { key: 'profit', label: 'Profit (Rs)', cls: 'num', value: c => c.profit, cell: c => plCell(c.profit), csv: c => c.profit },
-      { key: 'margin', label: 'Margin', cls: 'num', value: c => c.margin, cell: c => pct(c.margin), csv: c => (c.margin == null ? '' : K.round2(c.margin * 100)) },
+      ...colsByKey(['profit']),
     ];
     const t = K.totals(rows);
     body = table('pnl-order', columns, rows, { empty: 'No orders in this period.', foot: { date: 'Total', order: plural(rows.length, 'order'), ...moneyFoot(t) } });
@@ -463,15 +468,15 @@ function viewPnl() {
       { key: 'orders', label: 'Orders', cls: 'num', value: r => r.orders, cell: r => r.orders, csv: r => r.orders },
       { key: 'qty', label: 'Qty sold', cls: 'num', value: r => r.qty, csv: r => r.qty,
         cell: r => num(r.qty) + (r.returnedQty ? `<span class="sub">${num(r.returnedQty)} returned</span>` : '') },
-      ...moneyCols().slice(0, 2),
+      ...colsByKey(['total', 'gst', 'goods']),
       { key: 'costs', label: 'Delivery + other (Rs)', cls: 'num', value: r => r.delivery + r.other, cell: r => num(r.delivery + r.other), csv: r => K.round2(r.delivery + r.other) },
-      moneyCols()[4],
+      ...colsByKey(['profit']),
       { key: 'unit', label: 'Profit / item', cls: 'num', value: r => (r.qty ? r.profit / r.qty : null), cell: r => (r.qty ? plCell(K.round2(r.profit / r.qty)) : '—'), csv: r => (r.qty ? K.round2(r.profit / r.qty) : '') },
-      moneyCols()[5],
+      ...colsByKey(['margin']),
     ];
     const t = K.totals(rows.map(r => ({ ...r, orders: 0 })));
     body = table('pnl-product', columns, rows, { empty: 'No products sold in this period.',
-      foot: { title: 'Total', qty: num(t.qty), sale: num(t.sale), goods: num(t.goods), costs: num(K.round2(t.delivery + t.other)), profit: plCell(t.profit), margin: pct(t.margin) } });
+      foot: { title: 'Total', qty: num(t.qty), ...moneyFoot(t), costs: num(K.round2(t.delivery + t.other)) } });
   } else {
     const rows = K.groupByPeriod(calcs.filter(c => matches(orderText(c))), group);
     const columns = [
@@ -487,20 +492,23 @@ function viewPnl() {
   const tableId = group === 'order' ? 'pnl-order' : group === 'product' ? 'pnl-product' : `pnl-${group}`;
   return `
   <div class="print-only"><h2>Profit &amp; Loss · Khalis Bazar</h2><p>${periodText(range)} · printed ${K.fmtDate(K.today())}</p></div>
-  <div class="page-head"><div><h1>Profit &amp; Loss</h1><p>Sale − PARC cost − delivery − other costs, for every order.</p></div></div>
+  <div class="page-head"><div><h1>Profit &amp; Loss</h1><p>Sales (with GST, same as Shopify) − PARC cost − delivery − other costs, for every order.</p></div></div>
   <section class="kpis" aria-label="Profit summary">
     <div class="hero-card">
       <div class="label">${T.profit < 0 ? 'Net loss' : 'Net profit'} · ${periodText(range)}</div>
       <div class="hero ${plClass(T.profit)}">${rs(T.profit)}</div>
-      <div class="sub">${pct(T.margin)} margin on ${rs(T.sale)} of sales${missing.length ? ` · before delivery on ${plural(missing.length, 'order')}` : ''}</div>
+      <div class="sub">${pct(T.margin)} margin${gstKept ? '' : ' · GST not counted as profit'}${missing.length ? ` · before delivery on ${plural(missing.length, 'order')}` : ''}</div>
     </div>
     <div class="tiles">
-      <div class="tile"><div class="label">Sales</div><div class="value">${rs(T.sale)}</div><div class="sub">${plural(T.orders, 'order')} · ${num(T.qty)} items</div></div>
+      <div class="tile"><div class="label">Sales incl. GST</div><div class="value">${rs(T.total)}</div><div class="sub">products ${rs(T.sale)} + GST ${rs(T.gst)}</div></div>
+      <div class="tile"><div class="label">GST collected</div><div class="value">${rs(T.gst)}</div><div class="sub">${gstKept ? 'you keep it: counted in profit' : 'for the government: not profit'}</div></div>
       <div class="tile"><div class="label">PARC cost</div><div class="value">${rs(T.goods)}</div><div class="sub">what PARC charges</div></div>
       <div class="tile"><div class="label">Delivery</div><div class="value">${rs(T.delivery)}</div><div class="sub">${missing.length ? `${plural(missing.length, 'order')} not entered` : 'courier charges'}</div></div>
       <div class="tile"><div class="label">Other costs</div><div class="value">${rs(T.other)}</div><div class="sub">packing, returns…</div></div>
+      <div class="tile"><div class="label">Orders</div><div class="value">${T.orders}</div><div class="sub">${num(T.qty)} items</div></div>
     </div>
   </section>
+  ${noGst ? `<div class="callout"><div><b>GST is missing for ${plural(noGst, 'Shopify order')}.</b> Update the shopify-sync function in Supabase, then press Sync Shopify to bring it in.</div></div>` : ''}
   ${missing.length || S.onlyMissing ? `<div class="callout"><div>${S.onlyMissing
     ? `Showing only the <b>${plural(missing.length, 'order')}</b> with no delivery charge.`
     : `<b>${plural(missing.length, 'order')}</b> ${missing.length === 1 ? 'has' : 'have'} no delivery charge yet, so profit looks higher than it is.`}</div>
@@ -517,8 +525,10 @@ function viewPnl() {
   </div>
   ${body}
   <p class="note">${group === 'order' ? 'Type delivery charges straight into the table (suggestions: your courier zone rates). PARC cost fills itself from the price list (grey); type a number to change it for one order. ' : ''}
-  Sale is the product price without GST. Returned orders have no sale and no PARC cost, but their delivery and other costs count as a loss. Cancelled orders are left out.
-  ${group === 'product' ? 'Each order’s delivery and other costs are shared across its products by sale value.' : ''}</p>`;
+  Sales = product prices + GST, the same total as Shopify. Profit = product sales${gstKept ? ' + GST' : ''} − PARC cost − delivery − other costs
+  (${gstKept ? 'GST is counted as yours' : 'GST is not counted as profit'}; change this in Settings ⚙).
+  Returned orders have no sale and no PARC cost, but their delivery and other costs count as a loss. Cancelled orders are left out.
+  ${group === 'product' ? 'Each order’s GST, delivery and other costs are shared across its products by sale value.' : ''}</p>`;
 }
 
 /* ---------- Orders ---------- */
@@ -542,7 +552,8 @@ function viewOrders() {
     { key: 'customer', label: 'Customer', value: c => c.order.customer, csv: c => c.order.customer,
       cell: c => `${esc(c.order.customer)}<span class="sub">${esc(c.order.city)}</span>` },
     { key: 'items', label: 'Products', cls: 'items', cell: c => itemsText(c.lines), csv: c => c.lines.map(l => `${l.title} ${l.variant} x${l.qty}`).join('; ') },
-    { key: 'sale', label: 'Sale (Rs)', cls: 'num', value: c => c.saleGross, cell: c => num(c.saleGross), csv: c => c.saleGross },
+    { key: 'sale', label: 'Total incl. GST (Rs)', cls: 'num', value: c => c.totalGross, csv: c => c.totalGross,
+      cell: c => num(c.totalGross) + (c.taxGross ? `<span class="sub">GST ${num(c.taxGross)}</span>` : '') },
     { key: 'parc', label: 'PARC amount (Rs)', cls: 'num', value: c => c.parcAmount, csv: c => c.parcAmount,
       cell: c => num(c.parcAmount) + (c.costMissing ? '<span class="sub"><span class="badge warn">price missing</span></span>' : '') },
     { key: 'status', label: 'Status', value: c => c.order.status, csv: c => c.order.status,
@@ -714,8 +725,9 @@ function openOrder(id) {
         <button type="button" class="btn sm" data-dlg="add-line">${icon('plus')} Add product</button>
         <button type="button" class="btn sm" data-dlg="use-prices" title="Set every PARC price in this order from today's price list">Use current price list</button>
       </div>
-      <h3 class="section">Costs</h3>
+      <h3 class="section">GST and costs</h3>
       <div class="form-grid">
+        <label class="field">GST charged (Rs)<input type="number" step="any" inputmode="decimal" name="tax" value="${o.tax ?? ''}" placeholder="0"><small>Tax added on top of the products (Shopify fills this in).</small></label>
         <div class="field"><label for="f-delivery">Delivery charge (Rs)</label>
           <input id="f-delivery" type="number" step="any" inputmode="decimal" name="delivery" value="${o.delivery ?? ''}" placeholder="Not entered yet">
           <div class="presets">${S.settings.delivery_presets.map(p => `<button type="button" class="btn sm" data-dlg="preset" data-amount="${p.amount}">${esc(p.label)} ${num(p.amount)}</button>`).join('')}</div></div>
@@ -735,8 +747,8 @@ function openOrder(id) {
   const drawSum = () => {
     const f = form.elements;
     const c = K.orderCalc({ status: f.status.value, delivery: numOrNull(f.delivery.value), other_cost: numOrNull(f.other_cost.value),
-      cost_override: numOrNull(f.cost_override.value) }, cleanLines());
-    d.querySelector('#order-sum').innerHTML = `<span>Sale <b>${rs(c.sale)}</b></span><span>PARC <b>${rs(c.goods)}</b></span>
+      cost_override: numOrNull(f.cost_override.value), tax: numOrNull(f.tax.value) }, cleanLines(), { gstIsIncome: !!S.settings.gst_is_income });
+    d.querySelector('#order-sum').innerHTML = `<span>Customer pays <b>${rs(c.total)}</b> (products ${rs(c.sale)} + GST ${rs(c.gst)})</span><span>PARC <b>${rs(c.goods)}</b></span>
       <span>Delivery <b>${c.deliveryMissing ? 'not entered' : rs(c.delivery)}</b></span><span>Other <b>${rs(c.other)}</b></span>
       <span>${c.profit < 0 ? 'Loss' : 'Profit'} <b class="${plClass(c.profit)}">${rs(c.profit)}</b></span>`;
     tbody.querySelectorAll('tr').forEach((tr, i) => { if (lines[i]) tr.querySelector('.amt').textContent = num((Number(lines[i].qty) || 0) * (Number(lines[i].price) || 0)); });
@@ -808,7 +820,7 @@ function openOrder(id) {
     const order = {
       ...o, order_no: orderNo, date: f.date.value, customer: f.customer.value.trim(), city: f.city.value.trim(), status: f.status.value,
       in_parc: f.in_parc.checked, delivery: numOrNull(f.delivery.value), other_cost: numOrNull(f.other_cost.value) ?? 0,
-      cost_override: numOrNull(f.cost_override.value), note: f.note.value.trim(),
+      cost_override: numOrNull(f.cost_override.value), tax: numOrNull(f.tax.value), note: f.note.value.trim(),
     };
     const removed = S.items.filter(i => i.order_id === o.id && !keep.some(k => k.id === i.id)).map(i => i.id);
     d.close();
@@ -834,6 +846,11 @@ function openSettings() {
     <div class="dlg-body">
       <div class="form-grid">
         <label class="field">PARC discount on display price (%)<input type="number" step="any" min="0" max="100" name="parc_discount" value="${S.settings.parc_discount}"></label>
+      </div>
+      <h3 class="section">GST that Shopify adds at checkout</h3>
+      <div style="display:grid;gap:8px">
+        <label class="check"><input type="radio" name="gst_is_income" value="0" ${S.settings.gst_is_income ? '' : 'checked'}> I pay it to the government: not my profit</label>
+        <label class="check"><input type="radio" name="gst_is_income" value="1" ${S.settings.gst_is_income ? 'checked' : ''}> I keep it: count it in my profit</label>
       </div>
       <h3 class="section">Delivery charge buttons</h3>
       <div class="form-grid">${S.settings.delivery_presets.map((p, i) => `
@@ -879,6 +896,7 @@ function openSettings() {
     S.settings = {
       ...S.settings,
       parc_discount: Number(f.parc_discount.value) || 0,
+      gst_is_income: f.gst_is_income.value === '1',
       delivery_presets: S.settings.delivery_presets.map((p, i) => ({ label: f[`pl${i}`].value.trim() || p.label, amount: Number(f[`pa${i}`].value) || 0 })),
     };
     d.close();
@@ -932,7 +950,10 @@ async function applyShopify(payload) {
   if (r.updated) parts.push(`${r.updated} status ${r.updated === 1 ? 'change' : 'changes'}`);
   if (r.productsAdded) parts.push(plural(r.productsAdded, 'new product'));
   if (r.pricesChanged) parts.push(plural(r.pricesChanged, 'price change'));
+  if (r.taxUpdated) parts.push(`GST added to ${plural(r.taxUpdated, 'order')}`);
   toast(`Synced: ${parts.join(', ')}`);
+  if (!r.hasTax) toast('GST did not come from Shopify: update the shopify-sync function code in Supabase, then sync again.', 'warn', 9000);
+  else if (S.db.missingColumns?.().includes('tax')) toast('GST cannot be saved yet: run the one-line database update in Supabase (see the yellow note at the top).', 'warn', 9000);
   return r;
 }
 
@@ -1096,6 +1117,9 @@ function renderShell() {
   </header>
   ${S.db.mode === 'local' ? `<div class="banner"><div><b>Local mode:</b> everything is saved only in this browser on this computer.
     Connect the free online database (khata/README.md) before real use, and keep a backup (Settings → Download backup).</div></div>` : ''}
+  ${S.db.missingColumns?.().includes('tax') ? `<div class="banner"><div><b>One-time database update needed for GST:</b> in Supabase open
+    <b>SQL Editor → New query</b>, run <code>alter table khata_orders add column if not exists tax numeric(12,2);</code> and reload this page.
+    Until then GST is shown after a sync but not saved.</div></div>` : ''}
   <main id="main"></main>`;
   $('#search').addEventListener('input', (e) => { S.search = e.target.value; scheduleRender(); });
 }
