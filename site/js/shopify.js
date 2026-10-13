@@ -1,6 +1,7 @@
 // Turns the "shopify-sync" function's reply into khata rows. Pure: returns the rows to save.
 // New orders are added; existing orders only move forward in status (never overwriting
 // delivery charges, costs, notes or a status you set by hand, except Shopify cancellations).
+// Orders listed in settings.ignored_orders (deleted in the khata) are skipped.
 import { parcPrice, round2 } from './calc.js';
 
 const RANK = { pending: 0, shipped: 1, delivered: 2 };
@@ -40,8 +41,10 @@ export function mergeShopify(state, payload, settings) {
   }
 
   const existing = new Map(state.orders.map(o => [o.id, o]));
+  const deleted = new Set((settings?.ignored_orders || []).map(x => x.id));
   for (const o of payload.orders || []) {
     const id = `so_${o.id}`;
+    if (deleted.has(id)) continue; // deleted in the khata on purpose: never re-import
     const status = statusFromShopify(o);
     const cur = existing.get(id);
     if (cur) {

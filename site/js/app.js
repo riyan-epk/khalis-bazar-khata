@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS = {
     { label: 'Same zone', amount: 270 },
     { label: 'Other zone', amount: 315 },
   ],
+  ignored_orders: [], // deleted Shopify orders { id, order_no, date }: Sync Shopify skips them
 };
 const PAY_METHODS = ['Cash', 'Bank transfer', 'JazzCash', 'Easypaisa', 'Cheque', 'Other'];
 const VIEWS = [['parc', 'PARC Display Khata'], ['pnl', 'Profit & Loss'], ['orders', 'Orders'], ['prices', 'Price list']];
@@ -25,6 +26,7 @@ const S = {
   products: [], orders: [], items: [], payments: [],
   settings: structuredClone(DEFAULT_SETTINGS),
   search: '', onlyMissing: false, ui: loadUi(), tables: {}, pending: 0, saveError: false,
+  selected: new Set(), // order ids ticked on the Orders page
 };
 
 /* ---------- helpers ---------- */
@@ -55,6 +57,7 @@ const ICONS = {
   calc: '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M16 15h.01M8 19h.01M12 19h.01M16 19h.01"/>',
   cash: '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  trash: '<path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
 };
 const icon = (name) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 
@@ -526,7 +529,13 @@ function viewOrders() {
   const opts = [['all', `All ${calcs.length}`], ...K.STATUSES.map(s => [s, `${K.STATUS_LABEL[s]} ${counts[s]}`])];
   const rows = calcs.filter(c => (S.ui.ordersStatus === 'all' || c.order.status === S.ui.ordersStatus) && matches(orderText(c)))
     .sort((a, b) => compare(b.order.date, a.order.date) || compare(b.order.order_no, a.order.order_no));
+  const picked = rows.filter(c => S.selected.has(c.order.id));
+  const allPicked = rows.length > 0 && picked.length === rows.length;
+  const ignored = S.settings.ignored_orders || [];
   const columns = [
+    { key: 'pick', cls: 'pick',
+      label: `<input type="checkbox" data-change="select-all" data-fk="select-all" ${allPicked ? 'checked' : ''} aria-label="Select all orders shown">`,
+      cell: c => `<input type="checkbox" data-change="select-order" data-id="${c.order.id}" data-fk="pick:${c.order.id}" ${S.selected.has(c.order.id) ? 'checked' : ''} aria-label="Select order ${esc(c.order.order_no)}">` },
     { key: 'date', label: 'Date', cls: 'nowrap', value: c => c.order.date, cell: c => K.fmtDate(c.order.date), csv: c => c.order.date },
     { key: 'order', label: 'Order', value: c => c.order.order_no, csv: c => c.order.order_no,
       cell: c => `<button class="link" data-action="edit-order" data-id="${c.order.id}">${esc(c.order.order_no)}</button><span class="sub">${c.order.source === 'shopify' ? 'Shopify' : 'Added by hand'}</span>` },
@@ -550,10 +559,39 @@ function viewOrders() {
   <div class="toolbar">
     ${seg('Status', 'orders-status', opts, S.ui.ordersStatus)}
     <span class="spacer"></span>
+    ${picked.length ? `<button class="btn sm danger" data-action="delete-selected">${icon('trash')} Delete ${plural(picked.length, 'order')}</button>` : ''}
     <button class="btn sm" data-action="csv" data-table="orders">${icon('download')} CSV</button>
   </div>
   ${table('orders', columns, rows, { empty: 'No orders yet. Press New order or Sync Shopify.' })}
-  <p class="note">Status: Pending → Shipped → Delivered (cash received). Use Returned for refused or returned COD parcels and Cancelled for orders that never went out.</p>`;
+  <p class="note">Tick orders and press Delete to remove ones that did not go through you (for example sold directly).
+  A deleted Shopify order does not come back when you press Sync Shopify.</p>
+  <p class="note">Status: Pending → Shipped → Delivered (cash received). Use Returned for refused or returned COD parcels and Cancelled for orders that never went out.</p>
+  ${ignored.length ? `<div class="callout info"><div><b>Deleted Shopify orders (${ignored.length})</b>: Sync Shopify skips these.
+    Press “Bring back” and then Sync Shopify to add one again.</div>
+    <div class="chips">${ignored.map(x => `<span class="chip">${esc(x.order_no)}${x.date ? ` · ${K.fmtDate(x.date, { day: 'numeric', month: 'short' })}` : ''}
+      <button class="btn sm" data-action="restore-order" data-id="${esc(x.id)}">Bring back</button></span>`).join('')}</div></div>` : ''}`;
+}
+
+// Deletes orders (and their products); Shopify ones are remembered so Sync Shopify skips them.
+function deleteOrders(ids) {
+  const list = S.orders.filter(o => ids.includes(o.id));
+  if (!list.length) return;
+  const names = list.map(o => o.order_no).join(', ');
+  const fromShopify = list.filter(o => o.source === 'shopify' || String(o.id).startsWith('so_'));
+  if (!confirm(`Delete ${plural(list.length, 'order')} (${names})?\n\nThey are removed from the PARC khata and Profit & Loss.`
+    + (fromShopify.length ? '\nShopify orders will not come back on Sync Shopify (you can bring them back from the Orders page).' : ''))) return false;
+  if (fromShopify.length) {
+    const known = new Set((S.settings.ignored_orders || []).map(x => x.id));
+    S.settings = { ...S.settings, ignored_orders: [
+      ...(S.settings.ignored_orders || []),
+      ...fromShopify.filter(o => !known.has(o.id)).map(o => ({ id: o.id, order_no: o.order_no, date: o.date })),
+    ] };
+    saveSettings();
+  }
+  list.forEach(o => S.selected.delete(o.id));
+  removeRows('orders', list.map(o => o.id));
+  toast(`${plural(list.length, 'order')} deleted`);
+  return true;
 }
 
 /* ---------- Price list ---------- */
@@ -752,7 +790,7 @@ function openOrder(id) {
         break;
       }
       case 'delete':
-        if (confirm(`Delete order ${o.order_no}? This cannot be undone.`)) { d.close(); removeRows('orders', o.id); toast(`Order ${o.order_no} deleted`); }
+        if (deleteOrders([o.id])) d.close();
         break;
       default:
     }
@@ -934,7 +972,17 @@ function fillMissingPrices() {
 }
 
 const ACTIONS = {
-  tab: (el) => { S.ui.view = el.dataset.view; S.onlyMissing = false; saveUi(); render(); window.scrollTo(0, 0); },
+  tab: (el) => { S.ui.view = el.dataset.view; S.onlyMissing = false; S.selected.clear(); saveUi(); render(); window.scrollTo(0, 0); },
+  'delete-selected': () => {
+    const shown = new Set((S.tables.orders?.rows || []).map(c => c.order.id));
+    deleteOrders([...S.selected].filter(id => shown.has(id)));
+  },
+  'restore-order': (el) => {
+    const x = (S.settings.ignored_orders || []).find(o => o.id === el.dataset.id);
+    S.settings = { ...S.settings, ignored_orders: (S.settings.ignored_orders || []).filter(o => o.id !== el.dataset.id) };
+    saveSettings();
+    toast(`${x?.order_no || 'The order'} will come back the next time you press Sync Shopify`);
+  },
   sort: (el) => {
     const cur = S.ui.sort[el.dataset.table];
     const dir = cur?.key === el.dataset.key ? (cur.dir === 1 ? -1 : 0) : 1;
@@ -989,6 +1037,11 @@ const CHANGES = {
   setting: (el) => { S.settings = { ...S.settings, [el.dataset.key]: Number(el.value) || 0 }; saveSettings(); },
   range: (el) => { S.ui[el.dataset.key] = el.value; saveUi(); scheduleRender(); },
   'show-drafts': (el) => { S.ui.showDrafts = el.checked; saveUi(); scheduleRender(); },
+  'select-order': (el) => { if (el.checked) S.selected.add(el.dataset.id); else S.selected.delete(el.dataset.id); scheduleRender(); },
+  'select-all': (el) => {
+    for (const c of S.tables.orders?.rows || []) { if (el.checked) S.selected.add(c.order.id); else S.selected.delete(c.order.id); }
+    scheduleRender();
+  },
 };
 
 /* ---------- rendering ---------- */

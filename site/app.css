@@ -31,32 +31,7 @@
   --radius: 14px;
   --font: 'Assistant', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-display: 'Playfair Display', Georgia, serif;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #12150E;
-    --surface: #1B1F15;
-    --surface-2: #21261A;
-    --line: #313827;
-    --line-strong: #434C35;
-    --ink: #F1EDE3;
-    --ink-2: #D2CBBB;
-    --muted: #A69E8B;
-    --accent: #8DBA32;
-    --accent-ink: #12150E;
-    --accent-soft: #26311A;
-    --track: #2B3420;
-    --pos: #A5D45A;
-    --neg: #F2867C;
-    --neg-soft: #3A1E1B;
-    --warn: #E9B949;
-    --warn-soft: #33290F;
-    --info-soft: #1C2633;
-    --info: #9DBCE6;
-    --shadow: none;
-    color-scheme: dark;
-  }
+  color-scheme: only light; /* always light, even when the phone/computer is in dark mode */
 }
 
 * { box-sizing: border-box; }
@@ -247,6 +222,8 @@ td input[type="number"], td select.inline {
   background: var(--surface); text-align: right; font-variant-numeric: tabular-nums;
 }
 td select.inline { width: auto; text-align: left; }
+th.pick, td.pick { width: 36px; padding-right: 0; }
+.pick input { width: 17px; height: 17px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
 td input.missing { border-color: var(--warn); background: var(--warn-soft); }
 td input::placeholder { color: var(--muted); opacity: .9; }
 .badge {

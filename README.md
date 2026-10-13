@@ -8,17 +8,21 @@ Two khatas in one small web app:
 - **Profit & Loss**: every order with its sale, PARC cost, delivery charge and other costs.
   View it by order, by product, daily, weekly or monthly, for any period.
 
-Also: **Orders** (Shopify orders come in with **Sync Shopify**; WhatsApp or phone orders are added with **New order**),
+Also: **Orders** (Shopify orders come in with **Sync Shopify**; WhatsApp or phone orders are added with **New order**;
+tick orders and press **Delete** to remove ones that did not go through you. A deleted Shopify order is
+remembered and never comes back on Sync, unless you press **Bring back** on the Orders page),
 **Price list** (every Khalis Bazar product with the PARC display price you set),
 **Ctrl + F** jumps to the search box, CSV export, print, and backup/restore.
+
+Live at **https://khata.roomcalcs.com** (also https://khalis-bazar-khata.ryaan-epk.workers.dev).
 
 ## What it costs: Rs 0
 
 | Job | Free service | Free limit (2026) |
 |---|---|---|
-| Website at `khata.kkhalisbazarpk.com` | **Cloudflare Pages** | unlimited visits, free SSL |
+| Website at `khata.roomcalcs.com` | **Cloudflare Workers** (static site from GitHub `riyan-epk/khalis-bazar-khata`) | static files are free and unlimited, free SSL |
 | Database + login + Shopify sync | **Supabase** (free plan) | 500 MB database (tens of thousands of orders), 500,000 sync calls a month |
-| Subdomain | your **Namecheap** domain | one CNAME record |
+| Domain | `roomcalcs.com`, already on Cloudflare DNS | custom domain added on the Worker |
 
 Two things to know about the Supabase free plan:
 
@@ -54,7 +58,7 @@ Only emails in the `khata_users` table can open the khata. To give a partner acc
 `insert into khata_users (email) values ('their@email.com');` in the SQL Editor.
 
 ### 3. Login settings
-1. **Authentication → URL Configuration**: Site URL = `https://khata.kkhalisbazarpk.com`.
+1. **Authentication → URL Configuration**: Site URL = `https://khata.roomcalcs.com`.
 2. **Authentication → Sign In / Providers → Email**: keep it on. If you don't want the confirmation
    email step, turn off **Confirm email**.
 3. After step 8 (your first login), turn **off "Allow new users to sign up"** in the same place.
@@ -81,24 +85,25 @@ orders and products. The function also refuses anyone who is not signed in and l
    ```
    This key is meant to be public. The data is protected by the login + the rules from step 2.
 
-### 6. Publish on Cloudflare Pages
-1. Sign up at https://dash.cloudflare.com (free).
-2. **Workers & Pages → Create → Pages → Upload assets**.
-3. Project name `khalis-khata` → upload the **`khata/site`** folder (only that folder) → **Deploy**.
-4. It opens at `https://khalis-khata.pages.dev`. Check that you see the sign-in page.
+### 6. Publish on Cloudflare (done: Worker `khalis-bazar-khata`)
+The `khata` folder is its own private GitHub repo, `riyan-epk/khalis-bazar-khata` (kept out of the
+shopify repo, whose 116 MB photo zip is too big for GitHub). Cloudflare **Workers & Pages** is connected
+to that repo and serves the `site` folder. **Every push to `main` redeploys the site automatically**:
 
-To update the app later: same project → **Create new deployment** → upload `khata/site` again.
+```bash
+git -C "C:/Users/SCS/Desktop/shopify/khata" commit -am "Describe the change"
+```
+```bash
+git -C "C:/Users/SCS/Desktop/shopify/khata" push
+```
 
-### 7. The subdomain khata.kkhalisbazarpk.com
-1. In the Cloudflare Pages project: **Custom domains → Set up a custom domain** →
-   `khata.kkhalisbazarpk.com` → it shows a CNAME target like `khalis-khata.pages.dev`.
-2. Namecheap → **Domain List → kkhalisbazarpk.com → Manage → Advanced DNS → Add New Record**:
-   - Type **CNAME Record**, Host **`khata`**, Value **`khalis-khata.pages.dev`**, TTL Automatic → ✓ save.
-3. Don't change the existing records (the Shopify store and the email records need them).
-4. After 5–30 minutes Cloudflare shows the domain as **Active** with SSL.
+### 7. The domain khata.roomcalcs.com (done)
+`roomcalcs.com` uses Cloudflare DNS, so in Cloudflare: **Workers & Pages → khalis-bazar-khata →
+Settings → Domains & Routes → Add → Custom domain → `khata.roomcalcs.com`**. Cloudflare creates the
+DNS record and SSL by itself. Optional: turn off the `workers.dev` address in the same place.
 
 ### 8. First sign-in
-1. Open https://khata.kkhalisbazarpk.com → **First time? Create the owner login** → use the email from step 2.
+1. Open https://khata.roomcalcs.com → **First time? Create the owner login** → use the email from step 2.
 2. Confirm the email if Supabase sends one, then sign in.
 3. Turn off sign-ups (step 3.3).
 4. Press **Sync Shopify**: all Shopify orders and current prices come in.
